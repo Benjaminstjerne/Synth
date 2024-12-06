@@ -54,10 +54,22 @@ h1 {
 .key:active {
   background: #bbb;
 }
+
+.start-button {
+  background: #4caf50; 
+  color: #fff; 
+  font-size: 18px; 
+  padding: 10px 20px; 
+  border: none; 
+  cursor: pointer; 
+  margin-top: 20px;
+}
 </style>
 </head>
 <body>
   <h1>Web Synth</h1>
+  <button class="start-button" id="startBtn">Tryk for at aktivere lyd</button>
+
   <div class="controls">
     <div class="section">
       <h2>Oscillator</h2>
@@ -137,6 +149,8 @@ h1 {
 
   <script>
     let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    let started = false;
+
     let masterGain = audioContext.createGain();
     masterGain.gain.value = 0.5;
     masterGain.connect(audioContext.destination);
@@ -147,33 +161,37 @@ h1 {
     filterNode.Q.value = 0;
     filterNode.connect(masterGain);
 
-    // Opret oscillator node, men start ikke lyden endnu
-    let oscillatorNode = null;
-    let lfoNode = audioContext.createOscillator();
-    let lfoGain = audioContext.createGain();
-    lfoNode.type = "sine";
-    lfoNode.frequency.value = 5; // default LFO rate
-    lfoGain.gain.value = 50; // default LFO depth
-    lfoNode.connect(lfoGain);
-    lfoNode.start();
-
-    // ADSR parametre
     let attack = 0.1;
     let decay = 0.2;
     let sustain = 0.7;
     let release = 0.5;
 
-    let currentNoteFreq = 0;
-    let isPlaying = false;
-    let noteStartTime = 0;
+    let oscillatorNode = null;
     let envelopeGain = audioContext.createGain();
     envelopeGain.gain.value = 0;
     envelopeGain.connect(filterNode);
 
-    // LFO target
+    let lfoNode = audioContext.createOscillator();
+    let lfoGain = audioContext.createGain();
+    lfoGain.gain.value = 50; // default depth
+    lfoNode.type = "sine";
+    lfoNode.frequency.value = 5; // default rate
+
     let lfoTarget = "frequency";
 
-    // Event listeners for UI
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+      started = true;
+      // Start LFO først efter brugeren har aktiveret audio
+      lfoNode.connect(lfoGain);
+      lfoGain.connect(filterNode.frequency); // Midlertidig, opdateres i updateLfoRouting()
+      lfoNode.start();
+      alert("Lyd er aktiveret. Prøv nu at trykke på tangenterne.");
+    });
+
+    // UI event listeners
     document.getElementById('waveform').addEventListener('change', e => {
       if(oscillatorNode) oscillatorNode.type = e.target.value;
     });
@@ -211,4 +229,82 @@ h1 {
     });
 
     document.getElementById('lfoRate').addEventListener('input', e => {
-      lfoNode.frequency.setValueAtTime(parse
+      lfoNode.frequency.setValueAtTime(parseFloat(e.target.value), audioContext.currentTime);
+    });
+
+    document.getElementById('lfoDepth').addEventListener('input', e => {
+      lfoGain.gain.setValueAtTime(parseFloat(e.target.value), audioContext.currentTime);
+    });
+
+    document.getElementById('lfoTarget').addEventListener('change', e => {
+      lfoTarget = e.target.value;
+      updateLfoRouting();
+    });
+
+    function updateLfoRouting() {
+      lfoGain.disconnect();
+      if(lfoTarget === "frequency") {
+        if(oscillatorNode) {
+          lfoGain.connect(oscillatorNode.frequency);
+        }
+      } else if(lfoTarget === "filter") {
+        lfoGain.connect(filterNode.frequency);
+      }
+    }
+
+    const keys = document.querySelectorAll('.key');
+    keys.forEach(key => {
+      key.addEventListener('mousedown', e => startNote(e));
+      key.addEventListener('mouseup', e => stopNote(e));
+      key.addEventListener('touchstart', e => { e.preventDefault(); startNote(e); }, {passive:false});
+      key.addEventListener('touchend', e => { e.preventDefault(); stopNote(e); }, {passive:false});
+      key.addEventListener('mouseleave', e => {
+        if(e.buttons === 1) stopNote(e);
+      });
+    });
+
+    let isPlaying = false;
+
+    function startNote(e) {
+      if(!started) return;
+      if(isPlaying) stopNote(e);
+
+      let target = e.target;
+      if(!target.dataset.note) return;
+
+      let freq = parseFloat(target.dataset.note);
+
+      oscillatorNode = audioContext.createOscillator();
+      oscillatorNode.type = document.getElementById('waveform').value;
+      oscillatorNode.frequency.value = freq;
+      oscillatorNode.detune.value = parseFloat(document.getElementById('detune').value);
+      oscillatorNode.connect(envelopeGain);
+
+      updateLfoRouting();
+
+      oscillatorNode.start();
+      isPlaying = true;
+
+      // ADSR start
+      const now = audioContext.currentTime;
+      envelopeGain.gain.cancelScheduledValues(now);
+      envelopeGain.gain.setValueAtTime(0, now);
+      envelopeGain.gain.linearRampToValueAtTime(1, now + attack); // Attack
+      envelopeGain.gain.linearRampToValueAtTime(sustain, now + attack + decay); // Decay til sustain
+    }
+
+    function stopNote(e) {
+      if(!isPlaying || !oscillatorNode) return;
+      const now = audioContext.currentTime;
+      envelopeGain.gain.cancelScheduledValues(now);
+      envelopeGain.gain.setValueAtTime(envelopeGain.gain.value, now);
+      envelopeGain.gain.linearRampToValueAtTime(0, now + release);
+
+      oscillatorNode.stop(now + release);
+      oscillatorNode = null;
+      isPlaying = false;
+    }
+
+  </script>
+</body>
+</html>
