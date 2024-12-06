@@ -43,7 +43,7 @@
   osc.frequency.value = 220; 
   osc.connect(envelopeGain);
 
-  // Simpel ADSR-lignende init (hurtig fade in)
+  // Simpel "fade in" af lyden, når den aktiveres
   function triggerSound() {
     const now = audioContext.currentTime;
     envelopeGain.gain.cancelScheduledValues(now);
@@ -51,7 +51,7 @@
     envelopeGain.gain.linearRampToValueAtTime(1, now + 0.5);
   }
 
-  // Start oscillator (men lyden aktiveres først ved resume)
+  // Start oscillator, men lyden aktiveres først, når vi resume'er context
   osc.start();
 
   // THREE.js setup
@@ -82,6 +82,11 @@
   let mesh = new THREE.Mesh(geometry, material);
   scene.add(mesh);
 
+  // Gem originale positioner for at lave organisk deformation
+  const positionAttribute = geometry.getAttribute('position');
+  const vertexCount = positionAttribute.count;
+  const originalPositions = new Float32Array(positionAttribute.array);
+
   // Variabler til interaktion
   let mouseX = 0;
   let mouseY = 0;
@@ -96,5 +101,80 @@
     let x = event.touches ? event.touches[0].clientX : event.clientX;
     let y = event.touches ? event.touches[0].clientY : event.clientY;
 
-    // Normaliser mouse coords til [0,1]
+    // Normaliser muse/touch-koordinater til [0,1]
     let nx = x / window.innerWidth;
+    let ny = y / window.innerHeight;
+
+    // Brug nx til frekvens, ny til filter cutoff
+    let newFreq = baseFreq + (maxFreq - baseFreq) * nx;
+    let newCutoff = minCutoff + (maxCutoff - minCutoff) * (1 - ny);
+
+    osc.frequency.setValueAtTime(newFreq, audioContext.currentTime);
+    filterNode.frequency.setValueAtTime(newCutoff, audioContext.currentTime);
+
+    mouseX = nx;
+    mouseY = ny;
+  }
+
+  function onPointerDown(event) {
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().then(() => {
+        started = true;
+        triggerSound();
+      });
+    } else if(!started) {
+      started = true;
+      triggerSound();
+    }
+    isPointerDown = true;
+    onPointerMove(event);
+  }
+
+  function onPointerUp(event) {
+    isPointerDown = false;
+  }
+
+  window.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('touchstart', onPointerDown, {passive:false});
+  window.addEventListener('touchmove', onPointerMove, {passive:false});
+  window.addEventListener('touchend', onPointerUp, {passive:false});
+
+  let clock = new THREE.Clock();
+
+  function animate() {
+    requestAnimationFrame(animate);
+    let t = clock.getElapsedTime();
+
+    // Organisk deformation af sfæren
+    for (let i = 0; i < vertexCount; i++) {
+      let x = originalPositions[i*3];
+      let y = originalPositions[i*3+1];
+      let z = originalPositions[i*3+2];
+
+      let length = Math.sqrt(x*x+y*y+z*z);
+      let offset = 0.03 * Math.sin(i*0.5 + t*2);
+      let newLength = 1 + offset;
+
+      positionAttribute.setXYZ(i, (x/length)*newLength, (y/length)*newLength, (z/length)*newLength);
+    }
+    positionAttribute.needsUpdate = true;
+
+    // Roter mesh’en langsomt
+    mesh.rotation.y += 0.001;
+    mesh.rotation.x += 0.0005;
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
