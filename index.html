@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web Synth</title>
+<style>
+body {
+  font-family: sans-serif;
+  background: #f0f0f0;
+  color: #333;
+  text-align: center;
+  margin: 0; padding: 0;
+}
+
+h1 {
+  margin-top: 20px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 20px;
+}
+
+.section {
+  background: #fff;
+  border: 1px solid #ccc;
+  padding: 15px;
+  margin: 10px;
+  min-width: 200px;
+}
+
+.section label {
+  display: block;
+  margin: 10px 0;
+}
+
+.keyboard {
+  margin: 20px;
+}
+
+.key {
+  margin: 5px;
+  padding: 10px;
+  background: #ddd;
+  border: 1px solid #bbb;
+  cursor: pointer;
+  font-size: 16px;
+  user-select: none;
+}
+
+.key:active {
+  background: #bbb;
+}
+</style>
+</head>
+<body>
+  <h1>Web Synth</h1>
+  <div class="controls">
+    <div class="section">
+      <h2>Oscillator</h2>
+      <label>Bølgeform:
+        <select id="waveform">
+          <option value="sine">Sine</option>
+          <option value="square">Square</option>
+          <option value="sawtooth">Sawtooth</option>
+          <option value="triangle">Triangle</option>
+        </select>
+      </label>
+      <label>Detune: 
+        <input type="range" id="detune" min="-1200" max="1200" value="0">
+      </label>
+    </div>
+
+    <div class="section">
+      <h2>Filter</h2>
+      <label>Type:
+        <select id="filterType">
+          <option value="lowpass">Lowpass</option>
+          <option value="highpass">Highpass</option>
+          <option value="bandpass">Bandpass</option>
+        </select>
+      </label>
+      <label>Cutoff:
+        <input type="range" id="cutoff" min="100" max="10000" value="1000">
+      </label>
+      <label>Resonance:
+        <input type="range" id="resonance" min="0" max="20" value="0">
+      </label>
+    </div>
+
+    <div class="section">
+      <h2>ADSR</h2>
+      <label>Attack:
+        <input type="range" id="attack" min="0" max="2" step="0.01" value="0.1">
+      </label>
+      <label>Decay:
+        <input type="range" id="decay" min="0" max="2" step="0.01" value="0.2">
+      </label>
+      <label>Sustain:
+        <input type="range" id="sustain" min="0" max="1" step="0.01" value="0.7">
+      </label>
+      <label>Release:
+        <input type="range" id="release" min="0" max="2" step="0.01" value="0.5">
+      </label>
+    </div>
+
+    <div class="section">
+      <h2>LFO</h2>
+      <label>Rate:
+        <input type="range" id="lfoRate" min="0.1" max="20" step="0.1" value="5">
+      </label>
+      <label>Depth:
+        <input type="range" id="lfoDepth" min="0" max="100" value="50">
+      </label>
+      <label>Target:
+        <select id="lfoTarget">
+          <option value="frequency">Pitch</option>
+          <option value="filter">Filter</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="keyboard">
+    <button class="key" data-note="261.63">C</button>
+    <button class="key" data-note="293.66">D</button>
+    <button class="key" data-note="329.63">E</button>
+    <button class="key" data-note="349.23">F</button>
+    <button class="key" data-note="392.00">G</button>
+    <button class="key" data-note="440.00">A</button>
+    <button class="key" data-note="493.88">B</button>
+    <button class="key" data-note="523.25">C5</button>
+  </div>
+
+  <script>
+    let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    let masterGain = audioContext.createGain();
+    masterGain.gain.value = 0.5;
+    masterGain.connect(audioContext.destination);
+
+    let filterNode = audioContext.createBiquadFilter();
+    filterNode.type = "lowpass";
+    filterNode.frequency.value = 1000;
+    filterNode.Q.value = 0;
+    filterNode.connect(masterGain);
+
+    // Opret oscillator node, men start ikke lyden endnu
+    let oscillatorNode = null;
+    let lfoNode = audioContext.createOscillator();
+    let lfoGain = audioContext.createGain();
+    lfoNode.type = "sine";
+    lfoNode.frequency.value = 5; // default LFO rate
+    lfoGain.gain.value = 50; // default LFO depth
+    lfoNode.connect(lfoGain);
+    lfoNode.start();
+
+    // ADSR parametre
+    let attack = 0.1;
+    let decay = 0.2;
+    let sustain = 0.7;
+    let release = 0.5;
+
+    let currentNoteFreq = 0;
+    let isPlaying = false;
+    let noteStartTime = 0;
+    let envelopeGain = audioContext.createGain();
+    envelopeGain.gain.value = 0;
+    envelopeGain.connect(filterNode);
+
+    // LFO target
+    let lfoTarget = "frequency";
+
+    // Event listeners for UI
+    document.getElementById('waveform').addEventListener('change', e => {
+      if(oscillatorNode) oscillatorNode.type = e.target.value;
+    });
+
+    document.getElementById('detune').addEventListener('input', e => {
+      if(oscillatorNode) oscillatorNode.detune.value = e.target.value;
+    });
+
+    document.getElementById('filterType').addEventListener('change', e => {
+      filterNode.type = e.target.value;
+    });
+
+    document.getElementById('cutoff').addEventListener('input', e => {
+      filterNode.frequency.value = e.target.value;
+    });
+
+    document.getElementById('resonance').addEventListener('input', e => {
+      filterNode.Q.value = e.target.value;
+    });
+
+    document.getElementById('attack').addEventListener('input', e => {
+      attack = parseFloat(e.target.value);
+    });
+
+    document.getElementById('decay').addEventListener('input', e => {
+      decay = parseFloat(e.target.value);
+    });
+
+    document.getElementById('sustain').addEventListener('input', e => {
+      sustain = parseFloat(e.target.value);
+    });
+
+    document.getElementById('release').addEventListener('input', e => {
+      release = parseFloat(e.target.value);
+    });
+
+    document.getElementById('lfoRate').addEventListener('input', e => {
+      lfoNode.frequency.setValueAtTime(parse
